@@ -113,6 +113,7 @@ class LocalServerFactory(Factory):
 
 class PACList():
 	def should_go_proxy(self, host):
+		#return False
 		return True
 
 def start_local_server():
@@ -126,7 +127,7 @@ def start_local_server():
 def create_wp_link():
 	from twisted.internet import reactor
 	f = WPClientFactory()
-	reactor.connectTCP('127.0.0.1', remote_server.PORT, f)
+	reactor.connectTCP('23.88.59.196', remote_server.PORT, f)
 	return f.get_link()
 
 def main():
