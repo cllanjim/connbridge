@@ -70,7 +70,7 @@ class WPProtocol(Protocol):
 	def _short_command(self, command, args):
 		short_args = []
 		for arg in args[:5]:
-			short_arg = arg if len(arg) < 86 else arg[:80] + '......' 
+			short_arg = arg if len(arg) < 86 else arg[:80] + '......(%d bytes)' % len(arg)
 			short_args.append(short_arg)
 		return '%d %s' % (command, short_args)
 
@@ -247,6 +247,9 @@ class WPProtocol(Protocol):
 		self.transport.loseConnection()
 		raise Exception()
 
+	def connectionLost(self, reason):
+		self.forwarder_manager.close_all_fowarders()
+
 class WPClientProtocol(WPProtocol):
 	def __init__(self):
 		WPProtocol.__init__(self)
@@ -338,17 +341,35 @@ class WPServerProtocol(WPProtocol):
 
 class WPClientFactory(ClientFactory):
 	protocol = WPClientProtocol
+	MAX_RETRY_COUNT = 3
 
-	def __init__(self):
+	def __init__(self, owner, auto_retry):
 		self.deferred = defer.Deferred()
+		self.owner = owner
+		self._retry_count = 0
 
 	def login_succeed(self, link):
 		self.link = link
-		d, self.deferred = self.deferred, None
-		d.callback(link)
+		self.owner.link_created(link)
+		self._retry_count = 0
 
-	def get_link(self):
-		return self.deferred
+	def clientConnectionLost(self, connector, reason):
+		log.msg('WPClientProtocol.clientConnectionLost')
+		if self._retry_count < self.MAX_RETRY_COUNT:
+			self._retry_count += 1
+			log.msg('retry connect : %d' % self._retry_count)
+			connector.connect()
+		if self._retry_count == 1:
+			self.owner.link_lost()
+
+	def clientConnectionFailed(self, connector, reason):
+		log.msg('WPClientProtocol.clientConnectionFailed')
+		if self._retry_count < self.MAX_RETRY_COUNT:
+			log.msg('retry connect : %d' % self._retry_count)
+			self._retry_count += 1
+			connector.connect()
+		if self._retry_count == 1:
+			self.owner.link_create_failed()
 
 class WPServerFactory(Factory):
 	protocol = WPServerProtocol

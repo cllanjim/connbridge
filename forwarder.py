@@ -31,12 +31,18 @@ class BiMap:
 		return forwarder in self._forwarder2id
 	def has_id(self, id):
 		return id in self._id2forwarder
+	def all_ids(self):
+		return self._id2forwarder.keys()
 
 class WPForwarderManager():
 	def __init__(self, link):
 		self.link = link
 		self.bimap = BiMap()
 		self._next_id = 1
+
+	def close_all_fowarders(self):
+		for id in self.bimap.all_ids():
+			self.close_forwarder(id)
 
 	def close_forwarder(self, forwarder_or_id):
 		if isinstance(forwarder_or_id, Forwarder):
@@ -134,9 +140,6 @@ class WPForwarder(Forwarder):
 
 	def forward_data_from_master(self, data):
 		self.manager.send_data_to_link(self, data)
-
-	def connection_lost(self, reason):
-		self.master.forwarder_closed(reason)
 
 	def master_closed(self, reason):
 		self.manager.close_forwarder(self)

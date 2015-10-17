@@ -44,7 +44,9 @@ class LocalServer(basic.LineReceiver, ForwarderMaster):
 				return
 			self._go_proxy = self.factory.pac.should_go_proxy(host)
 			if self._go_proxy:
-				print self.factory.link
+				if not self.factory.link:
+					self.respondGatewayTimeout()
+					return
 				create_wp_forwarder(self, self.factory.link.forwarder_manager, (host, port))
 			else:
 				create_direct_forwarder(self, (host,port))
@@ -72,7 +74,10 @@ class LocalServer(basic.LineReceiver, ForwarderMaster):
 			self._pending_data_arr.append(data)
 		
 	def connectionLost(self, reason):
-		from twisted.internet import reactor
+		if self.forwarder:
+			self.forwarder.master_closed(reason)
+			self.forwarder = None
+
 	def _parseHTTPHeader(self):
 		return None
 	def respondBadRequest(self):
@@ -81,6 +86,9 @@ class LocalServer(basic.LineReceiver, ForwarderMaster):
 	def respondNotFound(self):
 		not_found_content = '<html><head><title>not found</title></head><body><h1>not found</h1></body></html>'
 		self.transport.write(b"HTTP/1.1 404 Not Found\r\nContent-length:%d\r\n\r\n%s"%(len(not_found_content), not_found_content))
+		self.transport.loseConnection()
+	def respondGatewayTimeout(self):
+		self.transport.write(b'HTTP/1.1 504 Gateway Timeout\r\n\r\n')
 		self.transport.loseConnection()
 
 	def forward_data_received(self, data):
@@ -106,10 +114,19 @@ class LocalServerFactory(Factory):
 	def __init__(self):
 		self.link = None
 		self.pac = PACList()
-	def set_link(self, link):
+		from twisted.internet import reactor
+		self.link_factory = WPClientFactory(self, True)
+		#remote_addr = '23.88.59.196'
+		remote_addr = '127.0.0.1'
+		reactor.connectTCP(remote_addr, remote_server.PORT, self.link_factory)
+	def link_created(self, link):
 		assert not self.link and link
 		self.link = link
 		log.msg('link created')
+	def link_lost(self):
+		self.link = None
+	def link_create_failed(self):
+		pass
 
 class PACList():
 	def should_go_proxy(self, host):
@@ -120,15 +137,6 @@ def start_local_server():
 	from twisted.internet import reactor
 	f = LocalServerFactory()
 	reactor.listenTCP(PORT, f)
-	d = create_wp_link()
-	d.addCallback(lambda link:f.set_link(link))
-	#d.addErrback(lambda )
-
-def create_wp_link():
-	from twisted.internet import reactor
-	f = WPClientFactory()
-	reactor.connectTCP('23.88.59.196', remote_server.PORT, f)
-	return f.get_link()
 
 def main():
 	from twisted.internet import reactor
