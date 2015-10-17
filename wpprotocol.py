@@ -3,7 +3,6 @@ import struct, random
 from twisted.internet.protocol import Protocol, Factory, ClientFactory
 from twisted.internet import defer
 import user_manager
-from forwarder import WPClientForwarderManager, WPServerForwarderManager
 from twisted.python import log
 
 #wall proxy portocol
@@ -32,6 +31,8 @@ class WPProtocol(Protocol):
 		self._frame_size = None
 		self._received_data_arr = []
 		self._received_data_len = 0
+		self._connections = {}
+		self._next_connection_id = 1
 
 	def send_data(self, connection_id, data):
 		data_len = len(data)
@@ -42,9 +43,6 @@ class WPProtocol(Protocol):
 		while start_offset < data_len:
 			self.send_command(COMMAND.SEND, str(connection_id), data[start_offset:start_offset + self.max_arg_size])
 			start_offset += self.max_arg_size
-
-	def close_connection(self, connection_id):
-		self.send_command(COMMAND.CLOSE_CONNECTION, str(connection_id))
 
 	def _encode(self, data):
 		byte_arr = []
@@ -217,17 +215,34 @@ class WPProtocol(Protocol):
 				return
 			id = int(id)
 			data = args[1]
-			self.forwarder_manager.send_data_to_forwarder(id, data)
+			if id >= self._next_connection_id:
+				self.closeLinkWithMsg('SEND invalid connection id')
+				return
+			# Maybe data to closed connection, just ignore it
+			if id not in self._connections:
+				log.msg('SEND outdated id : %d' % id)
+				return
+			connection = self._connections[id]
+			connection._data_received(data)
 		elif cmd == COMMAND.CLOSE_CONNECTION:
 			if len(args) != 1:
-				self.closeLinkWithMsg('CLOSE_CONNECTION expect 2 args')
+				self.closeLinkWithMsg('CLOSE_CONNECTION expect 1 args')
 				return
 			id = args[0]
 			if not id.isdigit():
 				self.closeLinkWithMsg('CLOSE_CONNECTION expect integer id')
 				return
 			id = int(id)
-			self.forwarder_manager.close_forwarder(id)
+			if id >= self._next_connection_id:
+				self.closeLinkWithMsg('CLOSE_CONNECTION invalid connection id')
+				return
+			# Maybe to closed connection, just ignore it
+			if id not in self._connections:
+				log.msg('CLOSE_CONNECTION outdated id : %d' % id)
+				return
+			connection = self._connections[id]
+			self._connections.pop(id)
+			connection._close()
 		elif cmd == COMMAND.CLOSE_LINK:
 			if len(args) != 1:
 				self.closeLinkWithMsg('CLOSE_LINK expect 1 arg, given %d'%len(args))
@@ -248,13 +263,18 @@ class WPProtocol(Protocol):
 		raise Exception()
 
 	def connectionLost(self, reason):
-		self.forwarder_manager.close_all_fowarders()
+		for id, connection in self._connections.iteritems():
+			connection._close()
+		self._connections.clear()
+
+	def close_connection(self, id):
+		self.send_command(COMMAND.CLOSE_CONNECTION, str(id))
+		self._connections.pop(id)
 
 class WPClientProtocol(WPProtocol):
 	def __init__(self):
 		WPProtocol.__init__(self)
 		self._logined = False
-		self.forwarder_manager = WPClientForwarderManager(self)
 
 	def connectionMade(self):
 		self.key = random.randint(1,255)
@@ -263,11 +283,6 @@ class WPClientProtocol(WPProtocol):
 
 	def login(self, version, user_name, password):
 		self.send_command(COMMAND.LOGIN, version, user_name, password)
-
-	def create_connection(self, connection_id, host, port):
-		assert isinstance(host, str)
-		assert isinstance(port, int) and port >= 1 and port <= 65535
-		self.send_command(COMMAND.CONNECT, str(connection_id), host, str(port))
 
 	def command_received(self, cmd, args):
 		if not self._logined:
@@ -287,11 +302,20 @@ class WPClientProtocol(WPProtocol):
 			log.msg('login succeed')
 			self.factory.login_succeed(self)
 
+	def create_connection(self, host, port):
+		assert isinstance(host, str)
+		assert isinstance(port, int) and port >= 1 and port <= 65535
+		id = self._next_connection_id
+		self.send_command(COMMAND.CONNECT, str(id), host, str(port))
+		connection = WPConnection(self, id)
+		self._connections[id] = connection
+		self._next_connection_id += 1
+		return connection
+
 class WPServerProtocol(WPProtocol):
 	def __init__(self):
 		WPProtocol.__init__(self)
 		self._logined = False
-		self.forwarder_manager = WPServerForwarderManager(self)
 
 	def dataReceived(self, data):
 		if not self.key:
@@ -330,7 +354,12 @@ class WPServerProtocol(WPProtocol):
 				return
 			id = int(id)
 			port = int(port)
-			self.forwarder_manager.create_forwarder(id, (host, port))
+			if id != self._next_connection_id:
+				self.closeLinkWithMsg('CONNECT command id must one larger per connection')
+				return
+			self._next_connection_id += 1
+			connection = WPServerConnection(self, id, host, port)
+			self._connections[id] = connection
 		else:
 			WPProtocol.command_received(self, cmd, args)
 
@@ -374,11 +403,98 @@ class WPClientFactory(ClientFactory):
 class WPServerFactory(Factory):
 	protocol = WPServerProtocol
 
-def main():
-	pass
+class WPConnection():
+	def __init__(self, link, id):
+		self.link = link
+		self.id = id
+		self.data_received_callback = None
+		self.closed_callback = None
+		self._closed = False
 
-def test():
-	print COMMAND.LOGIN
+	def send(self, data):
+		self.link.send_data(self.id, data)
 
-if __name__ == '__main__':
-	test()
+	def close(self):
+		self.link.close_connection(self.id)
+		self._close()
+
+	def set_callbacks(self, data_received_callback, closed_callback):
+		self.data_received_callback = data_received_callback
+		self.closed_callback = closed_callback
+
+	#called from link
+	def _data_received(self, data):
+		assert self.data_received_callback
+		self.data_received_callback(data)
+
+	def _close(self):
+		assert not self._closed
+		self._closed = True
+		if self.closed_callback:
+			self.closed_callback()
+
+class WPServerConnection(WPConnection):
+	def __init__(self, link, id, host, port):
+		WPConnection.__init__(self, link, id)
+		from twisted.internet import reactor
+		reactor.connectTCP(host, port, WPResourceFetcherFactory(self))
+
+class WPResourceFetcher(Protocol):
+	'''
+	fetch resource for WPServerConnection
+	'''
+	def connectionMade(self):
+		self.factory.fetcherConnectionMade(self)
+
+	def dataReceived(self, data):
+		self.factory.fetcherDataReceived(data)
+
+class WPResourceFetcherFactory(ClientFactory):
+	protocol = WPResourceFetcher
+	def __init__(self, wp_connetion):
+		self.wp_connetion = wp_connetion
+		self.connector = None
+		self.fetcher = None
+		wp_connetion.set_callbacks(self.wp_connection_data_received, self.wp_connection_closed)
+		self._pending_data_arr = []
+
+	def startedConnecting(self, connector):
+		self.connector = connector
+
+	def clientConnectionFailed(self, connector, reason):
+		self.clientConnectionLost(connector, reason)
+
+	def clientConnectionLost(self, connector, reason):
+		connection = self.wp_connetion
+		if connection:
+			self._clear_wp_connection()
+			connection.close()
+
+	def fetcherConnectionMade(self, fetcher):
+		log.msg('fetcherConnectionMade')
+		self.fetcher = fetcher
+		for data in self._pending_data_arr:
+			log.msg('fetcher write pending data(%d) : %s' % (len(data),data))
+			with open('a', 'wb') as f:
+				f.write(str(len(data)))
+				f.write(data)
+			self.fetcher.transport.write(data)
+
+	def fetcherDataReceived(self, data):
+		log.msg('fetcherDataReceived')
+		self.wp_connetion.send(data)
+
+	def wp_connection_data_received(self, data):
+		log.msg('wp_connection_data_received')
+		if not self.fetcher:
+			self._pending_data_arr.append(data)
+		else:
+			self.fetcher.transport.write(data)
+
+	def wp_connection_closed(self):
+		self._clear_wp_connection()
+		self.connector.disconnect()
+
+	def _clear_wp_connection(self):
+		self.wp_connetion.set_callbacks(None, None)
+		self.wp_connetion = None

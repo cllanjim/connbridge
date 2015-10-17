@@ -1,15 +1,14 @@
-from twisted.internet.protocol import Protocol,Factory
+from twisted.internet.protocol import Protocol,Factory,ClientFactory
 from twisted.protocols import basic
-from forwarder import ForwarderMaster, create_direct_forwarder, create_wp_forwarder
-from twisted.web import http
 import remote_server
 from wpprotocol import WPClientFactory
 import sys
 from twisted.python import log
+from twisted.internet import defer
 
 PORT = 8585
 
-class LocalServer(basic.LineReceiver, ForwarderMaster):
+class LocalServer(basic.LineReceiver):
 	def __init__(self):
 		self._first_line_received = False
 		self._headers = {}
@@ -19,6 +18,7 @@ class LocalServer(basic.LineReceiver, ForwarderMaster):
 		self._pending_data_arr = []
 
 	def lineReceived(self, line):
+		self._header_lines.append(line)
 		if not line:
 			if not self._first_line_received or not 'host' in self._headers:
 				self.respondBadRequest()
@@ -47,9 +47,13 @@ class LocalServer(basic.LineReceiver, ForwarderMaster):
 				if not self.factory.link:
 					self.respondGatewayTimeout()
 					return
-				create_wp_forwarder(self, self.factory.link.forwarder_manager, (host, port))
+				d = defer.maybeDeferred(self.factory.link.create_connection, host, port)
 			else:
-				create_direct_forwarder(self, (host,port))
+				f = DirectForwarderFactory()
+				from twisted.internet import reactor
+				reactor.connectTCP(host, port, f)
+				d = f.getDirectForwader()
+			d.addCallbacks(self.forwarder_created, self.forwarder_create_failed)
 
 			self.setRawMode()
 		elif not self._first_line_received:
@@ -65,49 +69,61 @@ class LocalServer(basic.LineReceiver, ForwarderMaster):
 			header = header.lower()
 			data = data.strip()
 			self._headers[header] = data
-		self._header_lines.append(line)
 
 	def rawDataReceived(self, data):
 		if self.forwarder:
-			self.forwarder.forward_data_from_master(data)
+			self.forwarder.send(data)
 		else:
 			self._pending_data_arr.append(data)
 		
 	def connectionLost(self, reason):
-		if self.forwarder:
-			self.forwarder.master_closed(reason)
-			self.forwarder = None
+		forwarder = self.forwarder
+		if forwarder:
+			self._clear_forwarder()
+			forwarder.close()
 
 	def _parseHTTPHeader(self):
 		return None
 	def respondBadRequest(self):
+		log.msg('respondBadRequest')
 		self.transport.write(b"HTTP/1.1 400 Bad Request\r\n\r\n")
 		self.transport.loseConnection()
 	def respondNotFound(self):
+		log.msg('respondNotFound')
 		not_found_content = '<html><head><title>not found</title></head><body><h1>not found</h1></body></html>'
 		self.transport.write(b"HTTP/1.1 404 Not Found\r\nContent-length:%d\r\n\r\n%s"%(len(not_found_content), not_found_content))
 		self.transport.loseConnection()
 	def respondGatewayTimeout(self):
+		log.msg('respondGatewayTimeout')
 		self.transport.write(b'HTTP/1.1 504 Gateway Timeout\r\n\r\n')
 		self.transport.loseConnection()
 
 	def forward_data_received(self, data):
 		self.transport.write(data)
-	def forwarder_closed(self, reason):
-		log.msg('forwarder closed : %s' % str(reason))
+	def forwarder_closed(self):
+		log.msg('forwarder closed')
+		self._clear_forwarder()
 		self.transport.loseConnection()
 	def forwarder_created(self, forwarder):
-		print 'LocalServer forwarder created'
+		print 'forwarder created'
 		self.forwarder = forwarder
+		self.forwarder.set_callbacks(self.forward_data_received, self.forwarder_closed)
 		if self._command != 'CONNECT':
+			#add a new line
+			self._header_lines.append('')
+			print self._header_lines
 			self._pending_data_arr.append('\r\n'.join(self._header_lines))
-			self._pending_data_arr.append('\r\n')
 		else:
 			self.transport.write('HTTP/1.1 200 OK\r\n\r\n')
-		for pending_data in self._pending_data_arr:
-			self.forwarder.forward_data_from_master(pending_data)
+		for data in self._pending_data_arr:
+			self.forwarder.send(data)
 	def forwarder_create_failed(self, reason):
+		log.msg('forwarder create failed : %s', str(reason))
 		self.respondNotFound()
+
+	def _clear_forwarder(self):
+		self.forwarder.set_callbacks(None, None)
+		self.forwarder = None
 
 class LocalServerFactory(Factory):
 	protocol = LocalServer
@@ -127,6 +143,39 @@ class LocalServerFactory(Factory):
 		self.link = None
 	def link_create_failed(self):
 		pass
+
+class DirectForwarder(Protocol):
+	def __init__(self):
+		self.data_received_callback = None
+		self.closed_callback = None
+	# Forwarder
+	def set_callbacks(data_received_callback, closed_callback):
+		self.data_received_callback = data_received_callback
+		self.closed_callback = closed_callback
+	def send(self, data):
+		self.transport.write(data)
+	def close(self):
+		self.loseConnection()
+	# Protocol
+	def dataReceived(self, data):
+		if self.data_received_callback:
+			self.data_received_callback(data)
+	def connectionLost(self, reason):
+		if self.closed_callback:
+			self.closed_callback()
+	def connectionMade(self):
+		d, self.factory.deferred.callback = self.factory.deferred.callback, None
+		d.callback(self)
+
+class DirectForwarderFactory(ClientFactory):
+	protocol = DirectForwarder
+	def __init__(self):
+		self.deferred = defer.Deferred()
+	def getDirectForwader():
+		return self.deferred
+	def clientConnectionFailed(self, connector, reason):
+		d, self.deferred = self.deferred, None
+		d.errback(reason)
 
 class PACList():
 	def should_go_proxy(self, host):
