@@ -182,7 +182,7 @@ class WPProtocol(Protocol):
 				return
 			arg_str_length = struct.unpack('!H', data[data_offset:data_offset+2])[0]
 			if data_offset + 2 + arg_str_length > data_len:
-				print data_offset, arg_str_length, data_len, args
+				log.msg('%d,%d,%d,%s'%(data_offset, arg_str_length, data_len, str(args)))
 				self.closeLinkWithMsg('invalid command : args count not match (%d/%d)'%(i, arg_count))
 				return
 			arg = data[data_offset+2: data_offset+2+arg_str_length]
@@ -384,7 +384,8 @@ class WPClientFactory(ClientFactory):
 
 	def clientConnectionLost(self, connector, reason):
 		log.msg('WPClientProtocol.clientConnectionLost')
-		if self._retry_count < self.MAX_RETRY_COUNT:
+		from twisted.internet import reactor
+		if self._retry_count < self.MAX_RETRY_COUNT and not reactor._stopped:
 			self._retry_count += 1
 			log.msg('retry connect : %d' % self._retry_count)
 			connector.connect()
@@ -474,10 +475,7 @@ class WPResourceFetcherFactory(ClientFactory):
 		log.msg('fetcherConnectionMade')
 		self.fetcher = fetcher
 		for data in self._pending_data_arr:
-			log.msg('fetcher write pending data(%d) : %s' % (len(data),data))
-			with open('a', 'wb') as f:
-				f.write(str(len(data)))
-				f.write(data)
+			log.msg('fetcher write pending data(%d)' % len(data))
 			self.fetcher.transport.write(data)
 
 	def fetcherDataReceived(self, data):

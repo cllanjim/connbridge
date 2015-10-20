@@ -2,7 +2,7 @@ from twisted.internet.protocol import Protocol,Factory,ClientFactory
 from twisted.protocols import basic
 import remote_server
 from wpprotocol import WPClientFactory
-import sys
+import sys,threading
 from twisted.python import log
 from twisted.internet import defer
 
@@ -105,13 +105,12 @@ class LocalServer(basic.LineReceiver):
 		self._clear_forwarder()
 		self.transport.loseConnection()
 	def forwarder_created(self, forwarder):
-		print 'forwarder created'
+		log.msg('forwarder created')
 		self.forwarder = forwarder
 		self.forwarder.set_callbacks(self.forward_data_received, self.forwarder_closed)
 		if self._command != 'CONNECT':
 			#add a new line
 			self._header_lines.append('')
-			print self._header_lines
 			self._pending_data_arr.append('\r\n'.join(self._header_lines))
 		else:
 			self.transport.write('HTTP/1.1 200 OK\r\n\r\n')
@@ -132,8 +131,8 @@ class LocalServerFactory(Factory):
 		self.pac = PACList()
 		from twisted.internet import reactor
 		self.link_factory = WPClientFactory(self, True)
-		#remote_addr = '23.88.59.196'
-		remote_addr = '127.0.0.1'
+		remote_addr = '23.88.59.196'
+		#remote_addr = '127.0.0.1'
 		reactor.connectTCP(remote_addr, remote_server.PORT, self.link_factory)
 	def link_created(self, link):
 		assert not self.link and link
@@ -188,10 +187,12 @@ def start_local_server():
 	reactor.listenTCP(PORT, f)
 
 def main():
+	log.startLogging(sys.stdout)
 	from twisted.internet import reactor
 	start_local_server()
-	reactor.run()
+	isMainThread = threading.current_thread().name == 'MainThread'
+	log.msg('isMainThread : %s'%isMainThread)
+	reactor.run(installSignalHandlers=isMainThread)
 
 if __name__ == '__main__':
-	log.startLogging(sys.stdout)
 	main()
