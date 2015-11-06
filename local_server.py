@@ -20,28 +20,55 @@ class LocalServer(basic.LineReceiver):
 	def lineReceived(self, line):
 		self._header_lines.append(line)
 		if not line:
-			if not self._first_line_received or not 'host' in self._headers:
+			if not self._first_line_received:
 				self.respondBadRequest()
 				return
-			host = self._headers['host']
+			host = None
 			port = 80
-			if ':' in self._request:
-				_, port_str = self._request.rsplit(':', 1)
-				i = 0
-				while i < len(port_str) and port_str[i].isdigit():
-					i += 1
-				if i != 0:
-					port = int(port_str[:i])
-			if ':' in host:
-				host,port_str = host.split(':', 1)
-				if not port_str.isdigit():
-					self.respondBadRequest()
-					return
-				port = int(port_str)
+			#check http path
+			request_host = None
+			if self._command == 'CONNECT':
+				request_host = self._request
+			scheme_headers = ['http://', 'https://']
+			for scheme_header in scheme_headers:
+				if self._request.startswith(scheme_header):
+					p = self._request.find('/', len(scheme_header))
+					if p == -1:
+						p = len(self._request)
+					request_host = self._request[len(scheme_header):p]
+			if request_host:
+				if ':' in request_host:
+					host, port_str = request_host.split(':')
+					port = int(port_str)
+				else:
+					host = request_host
+			#check host header
+			host_header = self._headers.get('host')
+			if host_header:
+				if ':' in host_header:
+					print host_header
+					host,port_str = host_header.split(':')
+					if not port_str.isdigit():
+						self.respondBadRequest()
+						return
+					port = int(port_str)
+				else:
+					host = host_header
+			if host is None or port is None:
+				self.respondBadRequest()
+				return
 			#avoid infinite loop
 			if port == PORT:
 				self.respondBadRequest()
 				return
+			
+			if self._command != 'CONNECT':
+				#add a new line
+				self._header_lines.append('')
+				self._pending_data_arr.append('\r\n'.join(self._header_lines))
+			else:
+				self.transport.write('HTTP/1.1 200 OK\r\n\r\n')
+
 			self._go_proxy = self.factory.pac.should_go_proxy(host)
 			if self._go_proxy:
 				if not self.factory.link:
@@ -51,6 +78,7 @@ class LocalServer(basic.LineReceiver):
 			else:
 				f = DirectForwarderFactory()
 				from twisted.internet import reactor
+				log.msg('%s %d'%(host, port))
 				reactor.connectTCP(host, port, f)
 				d = f.getDirectForwader()
 			d.addCallbacks(self.forwarder_created, self.forwarder_create_failed)
@@ -63,6 +91,16 @@ class LocalServer(basic.LineReceiver):
 				return
 			self._command, self._request, self._version = parts
 			self._first_line_received = True
+			#only keep path
+			if self._request.startswith('http://'):
+				path_start = self._request.find('/', len('http://'))
+				if path_start == -1:
+					path = '/'
+				else:
+					path = self._request[path_start:]
+				assert len(self._header_lines) == 1
+				line = ' '.join((self._command, path, self._version))
+				self._header_lines[0] = line
 			log.msg(line)
 		else:
 			header, data = line.split(b':', 1)
@@ -108,12 +146,7 @@ class LocalServer(basic.LineReceiver):
 		log.msg('forwarder created')
 		self.forwarder = forwarder
 		self.forwarder.set_callbacks(self.forward_data_received, self.forwarder_closed)
-		if self._command != 'CONNECT':
-			#add a new line
-			self._header_lines.append('')
-			self._pending_data_arr.append('\r\n'.join(self._header_lines))
-		else:
-			self.transport.write('HTTP/1.1 200 OK\r\n\r\n')
+
 		for data in self._pending_data_arr:
 			self.forwarder.send(data)
 	def forwarder_create_failed(self, reason):
@@ -144,35 +177,50 @@ class LocalServerFactory(Factory):
 		pass
 
 class DirectForwarder(Protocol):
-	def __init__(self):
+	def __init__(self, id):
 		self.data_received_callback = None
 		self.closed_callback = None
+		self.id = id
+		
 	# Forwarder
-	def set_callbacks(data_received_callback, closed_callback):
+	def set_callbacks(self, data_received_callback, closed_callback):
 		self.data_received_callback = data_received_callback
 		self.closed_callback = closed_callback
 	def send(self, data):
+		log.msg('DirectForwarder.send %d %s(%d)'%(self.id, repr(data[:30]), len(data)))
 		self.transport.write(data)
 	def close(self):
-		self.loseConnection()
+		self.transport.loseConnection()
 	# Protocol
 	def dataReceived(self, data):
+		log.msg('DirectForwarder.dataReceived %d %s(%d)'%(self.id, repr(data[:30]), len(data)))
 		if self.data_received_callback:
 			self.data_received_callback(data)
+		else:
+			log.msg('DirectForwarder.dataReceived %d without callback' % self.id)
 	def connectionLost(self, reason):
+		log.msg('DirectForwarder.connectionLost %d'%self.id)
 		if self.closed_callback:
 			self.closed_callback()
 	def connectionMade(self):
-		d, self.factory.deferred.callback = self.factory.deferred.callback, None
+		d, self.factory.deferred = self.factory.deferred, None
 		d.callback(self)
 
 class DirectForwarderFactory(ClientFactory):
-	protocol = DirectForwarder
+	id = 1
 	def __init__(self):
 		self.deferred = defer.Deferred()
-	def getDirectForwader():
+	def buildProtocol(self, addr):
+		print 'buildProtocol'
+		p = DirectForwarder(self.__class__.id)
+		p.factory = self
+		self.__class__.id += 1
+		print self.__class__.id
+		return p
+	def getDirectForwader(self):
 		return self.deferred
 	def clientConnectionFailed(self, connector, reason):
+		log.msg('DirectForwarderFactory.clientConnectionFailed')
 		d, self.deferred = self.deferred, None
 		d.errback(reason)
 
