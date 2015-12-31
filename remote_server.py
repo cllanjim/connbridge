@@ -4,9 +4,12 @@ from wpprotocol import WPServerFactory
 import sys
 from twisted.python import log
 
+from wpprotocol_generator import gen_protocol_if_needed
+
 PORT = 8586
 
 def main():
+	gen_protocol_if_needed()
 	from twisted.internet import reactor
 	f = WPServerFactory()
 	reactor.listenTCP(PORT, f)

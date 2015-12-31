@@ -1,2 +1,5 @@
 *.pyc
 *.log
+.vscode
+_trial_temp*/
+wpprotocolbase.py

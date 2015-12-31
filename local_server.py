@@ -6,6 +6,8 @@ import sys,threading
 from twisted.python import log
 from twisted.internet import defer
 
+from wpprotocol_generator import gen_protocol_if_needed
+
 PORT = 8585
 
 class LocalServer(basic.LineReceiver):
@@ -235,6 +237,7 @@ def start_local_server():
 	reactor.listenTCP(PORT, f)
 
 def main():
+	gen_protocol_if_needed()
 	log.startLogging(sys.stdout)
 	from twisted.internet import reactor
 	start_local_server()
