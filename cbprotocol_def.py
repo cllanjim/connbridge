@@ -65,9 +65,7 @@ events = [
 	}
 ]
 
-client_protocol_encoder = None
-client_protocol_decoder = None
-server_procotol_encoder = None
-server_procotol_decoder = None
-ClientProtocolMixin = None
-ServerProtocolMixin = None
+for cmd in commands:
+	if 'returns' in cmd:
+		cmd['parameters'].insert(0, {'name' : 'cmd_id', 'type' : int})
+		cmd['returns'].insert(0, {'name' : 'cmd_id', 'type' : int})

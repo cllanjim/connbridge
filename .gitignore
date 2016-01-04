@@ -2,4 +2,5 @@
 *.log
 .vscode
 _trial_temp*/
-wpprotocolbase.py
+_cbprotocolbase.py
+test/_test_cbprotocolbase.py

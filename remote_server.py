@@ -1,17 +1,14 @@
 from twisted.internet.protocol import Protocol,Factory
 from twisted.protocols import basic
-from wpprotocol import WPServerFactory
+from cbprotocol import CBServerFactory
 import sys
 from twisted.python import log
-
-from wpprotocol_generator import gen_protocol_if_needed
 
 PORT = 8586
 
 def main():
-	gen_protocol_if_needed()
 	from twisted.internet import reactor
-	f = WPServerFactory()
+	f = CBServerFactory()
 	reactor.listenTCP(PORT, f)
 	reactor.run()
 

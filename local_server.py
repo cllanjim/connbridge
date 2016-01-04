@@ -1,12 +1,10 @@
 from twisted.internet.protocol import Protocol,Factory,ClientFactory
 from twisted.protocols import basic
 import remote_server
-from wpprotocol import WPClientFactory
+from cbprotocol import CBClientFactory
 import sys,threading
 from twisted.python import log
 from twisted.internet import defer
-
-from wpprotocol_generator import gen_protocol_if_needed
 
 PORT = 8585
 
@@ -165,7 +163,7 @@ class LocalServerFactory(Factory):
 		self.link = None
 		self.pac = PACList()
 		from twisted.internet import reactor
-		self.link_factory = WPClientFactory(self, True)
+		self.link_factory = CBClientFactory(self, True)
 		remote_addr = '23.88.59.196'
 		#remote_addr = '127.0.0.1'
 		reactor.connectTCP(remote_addr, remote_server.PORT, self.link_factory)
@@ -237,7 +235,6 @@ def start_local_server():
 	reactor.listenTCP(PORT, f)
 
 def main():
-	gen_protocol_if_needed()
 	log.startLogging(sys.stdout)
 	from twisted.internet import reactor
 	start_local_server()

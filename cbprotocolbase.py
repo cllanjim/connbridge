@@ -1,0 +1,5 @@
+import os
+import cbprotocol_generator
+
+cbprotocol_generator.gen_protocol_if_needed()
+execfile(cbprotocol_generator.file_to_gen)
