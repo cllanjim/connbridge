@@ -105,7 +105,7 @@ CBClientBase_template = '''
 class CBClientBase(CBProtocolBase):
 	def __init__(self):
 		self._cmd_defers = {}
-		self._cmd_id = 0
+		self._last_cmd_id = 0
 	def _validate_received_msg(self, msg_type, name, params):
 		if msg_type == MSG_TYPE_RESPONSE:
 			self._validate_received_responce_valid(name, params)
@@ -151,8 +151,8 @@ class CBClientBase(CBProtocolBase):
 		d.callback(params[1:])
 
 	def _next_cmd_id(self):
-		self._cmd_id += 1
-		return self._cmd_id
+		self._last_cmd_id += 1
+		return self._last_cmd_id
 '''
 
 CBServerBase_template = '''
