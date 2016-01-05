@@ -27,13 +27,13 @@ class CBProtocolBaseTest(unittest.TestCase):
 		client.login('0.1', 'abc', '123456')
 		self.assertEqual(client.msg_count(), 1)
 		self._loop(client, server)
-	def test_connection_send(self):
+	def test_cb_send(self):
 		client,server = self._build()
-		d = client.connection_send(2, 'hello,world')
-		server.responde_connection_send(client._last_cmd_id, True, '')
+		d = client.cb_send(2, 'hello,world')
+		server.responde_cb_send(client._last_cmd_id, True, '')
 		self._loop(client, server)
 		return d
 	def test_event(self):
 		client,server = self._build()
-		server.fire_connection_data_received(1,'event')
+		server.fire_cb_data_received(1,'event')
 		self._loop(client, server)

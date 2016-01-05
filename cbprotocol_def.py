@@ -12,7 +12,7 @@ commands = [
 		]
 	},
 	{
-		'name' : 'connect',
+		'name' : 'cb_connect',
 		'parameters' : [
 			{ 'name' : 'id', 'type' : int },
 			{ 'name' : 'host', 'type' : str },
@@ -24,7 +24,7 @@ commands = [
 		],
 	},
 	{
-		'name' : 'connection_send',
+		'name' : 'cb_send',
 		'parameters' : [
 			{ 'name' : 'id', 'type' : int },
 			{ 'name' : 'data', 'type' : str},
@@ -35,7 +35,7 @@ commands = [
 		]
 	},
 	{
-		'name' : 'close_connection',
+		'name' : 'cb_close',
 		'parameters' : [
 			{ 'name' : 'id', 'type' : int}
 		]
@@ -50,14 +50,14 @@ commands = [
 
 events = [
 	{
-		'name' : 'connection_data_received',
+		'name' : 'cb_data_received',
 		'parameters' : [
 			{ 'name' : 'id', 'type' : int },
 			{ 'name' : 'data', 'type' : str},
 		]
 	},
 	{
-		'name' : 'connection_lost',
+		'name' : 'cb_connection_lost',
 		'parameters' : [
 			{ 'name' : 'id', 'type' : int },
 			{ 'name' : 'reason', 'type' : str},
