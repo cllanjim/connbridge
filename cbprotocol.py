@@ -18,8 +18,7 @@ class CBProtocol(Protocol):
 	def __init__(self):
 		self.key = None
 		self._frame_size = None
-		self._received_data_arr = []
-		self._received_data_len = 0
+		self._received_data = bytearray()
 		self._connections = {}
 		self._next_connection_id = 1
 		self._logined = True
@@ -51,82 +50,35 @@ class CBProtocol(Protocol):
 
 	def dataReceived(self, data):
 		data = self._decode(data)
-		self._received_data_arr.append(data)
-		self._received_data_len += len(data)
+		self._received_data += data
 		self.update_frame_receiving_state()
 
 	def update_frame_receiving_state(self):
-		while self._received_data_arr:
+		while self._received_data:
 			if self._frame_size is None:
-				if self._received_data_len < 4:
+				if len(self._received_data) < 4:
 					return
-				frame_size_str = ''
-				for data in self._received_data_arr:
-					frame_size_str += data[:4-len(frame_size_str)]
-					if len(frame_size_str) == 4:
-						break
-				assert len(frame_size_str) == 4
-				self._frame_size = struct.unpack('!I', frame_size_str)[0]
+				self._frame_size = struct.unpack_from('!I', self._received_data, 0)[0]
 				if self._frame_size <= 4:
 					self._frame_size = None
 					self.closeLinkWithMsg('invalide frame size : %d'%self._frame_size)
 					return
 			assert self._frame_size
-			if self._frame_size > self._received_data_len:
+			if len(self._received_data) < self._frame_size:
 				return
 			#frame data ready
-			frame_data_arr = []
-			to_read_len = self._frame_size
-			new_recived_data_arr = []
-			for data in self._received_data_arr:
-				if not to_read_len:
-					new_recived_data_arr.append(data)
-				elif len(data) <= to_read_len:
-					frame_data_arr.append(data)
-					to_read_len -= len(data)
-				else:
-					frame_data_arr.append(data[:to_read_len])
-					new_recived_data_arr.append(data[to_read_len:])
-					to_read_len = 0
-			new_recived_data_len = 0
-			for data in new_recived_data_arr:
-				new_recived_data_len += len(data)
-			assert not to_read_len
-			assert new_recived_data_len + self._frame_size == self._received_data_len
-			self._received_data_arr = new_recived_data_arr
-			self._received_data_len = new_recived_data_len
-			#remove 4 byte of frame size
-			if len(frame_data_arr[0]) > 4:
-				frame_data_arr[0] = frame_data_arr[0][4:]
-			else:
-				new_frame_data_arr = []
-				start_data_index = 0
-				start_data_offset = 0
-				to_remove_len = 4
-				for i,data in enumerate(frame_data_arr):
-					if not to_remove_len:
-						new_frame_data_arr.append(data)
-					elif len(data) <= to_remove_len:
-						to_remove_len -= len(data)
-					else:
-						new_frame_data_arr.append(data[to_remove_len:])
-						to_remove_len = 0
-				new_frame_data_len = 0
-				for data in new_frame_data_arr:
-					new_frame_data_len += len(data)
-				assert new_frame_data_len + 4 == self._frame_size
-				frame_data_arr = new_frame_data_arr
+			frame_data = str(self._received_data[4:self._frame_size])
+			self._received_data = self._received_data[self._frame_size:]
 			#notify frame received
-			self.frameReceived(''.join(frame_data_arr))
+			self.frameReceived(frame_data)
 			self._frame_size = None
 
 	def frameReceived(self, data):
-		self._dispatch_msg(data)
-		# try:
-		# 	self._dispatch_msg(data)
-		# except Exception as e:
-		# 	raise e
-		# 	self.closeLinkWithMsg(str(e))
+		try:
+			self._dispatch_msg(data)
+		except Exception as e:
+			raise e
+			self.closeLinkWithMsg(str(e))
 
 	def closeLinkWithMsg(self, msg):
 		log.msg('closeLinkWithMsg : %s'% msg)
