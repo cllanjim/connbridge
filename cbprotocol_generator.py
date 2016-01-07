@@ -69,6 +69,8 @@ def _decode(data):
 		else:
 			raise Exception()
 		params.append(param)
+	if cur[0] != len(data):
+		raise Exception('too much data to decode')
 	return (msg_type, name, tuple(params))
 
 class InvalidMsgException():
