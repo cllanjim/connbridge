@@ -2,5 +2,5 @@
 *.log
 .vscode
 _trial_temp*/
-_cbprotocolbase.py
-test/_test_cbprotocolbase.py
+/connbridge/_cbprotocolbase.py
+/connbridge/test/_test_cbprotocolbase.py
