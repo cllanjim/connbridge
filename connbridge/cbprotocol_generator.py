@@ -1,26 +1,25 @@
 from string import Template
 import os, inspect
-from cbprotocol_def import commands,events
+from cbprotocol_def import common_commands,client_commands,server_commands
 
 method_template = '''
 	def %s(%s):
 %s
 '''
 
-cbprotocolbase_header = '''
+_file_header = '''
 #don't modify this file
 #this file is generated from cbprotocol_generator.py and cbprotocol_def.py
 #don't import this file, import "cbprotocolbase" instead
 
 import struct
 from twisted.internet import defer
-from cbprotocol_def import commands, events
+from cbprotocol_def import common_commands,client_commands,server_commands
 
 FIRST_MSG_TYPE = 1
-LAST_MSG_TYPE = 3
+LAST_MSG_TYPE = 2
 (MSG_TYPE_COMMAND,
 	MSG_TYPE_RESPONSE,
-	MSG_TYPE_EVENT
 ) = range(FIRST_MSG_TYPE,LAST_MSG_TYPE+1)
 
 def _encode(msg_type, name, params):
@@ -79,8 +78,18 @@ class InvalidMsgException():
 		self.msg = msg
 	def __str__(self):
 		return '%s : %s' % (self.reason, repr(self.msg))
+'''
 
+CBProtocolBase_template = '''
 class CBProtocolBase():
+	def __init__(self):
+		self._cmd_defers = {}
+		self._last_cmd_id = 0
+
+	def _next_cmd_id(self):
+		self._last_cmd_id += 1
+		return self._last_cmd_id
+
 	def _send_msg(self, msg):
 		raise NotImplementedError()
 
@@ -92,8 +101,6 @@ class CBProtocolBase():
 			return
 		if msg_type == MSG_TYPE_COMMAND:
 			receiver_method_name = generate_command_receiver_name(name)
-		elif msg_type == MSG_TYPE_EVENT:
-			receiver_method_name = generate_event_receiver_name(name)
 		else:
 			raise Exception()
 		receiver_method = getattr(self, receiver_method_name)
@@ -101,23 +108,31 @@ class CBProtocolBase():
 
 	def _gen_msg(self, msg_type, msg_name, params):
 		return _encode(msg_type, msg_name, params)
-'''
 
-CBClientBase_template = '''
-class CBClientBase(CBProtocolBase):
-	def __init__(self):
-		self._cmd_defers = {}
-		self._last_cmd_id = 0
 	def _validate_received_msg(self, msg_type, name, params):
 		if msg_type == MSG_TYPE_RESPONSE:
 			self._validate_received_responce_valid(name, params)
-		elif msg_type == MSG_TYPE_EVENT:
-			self._validate_received_event_valid(name, params)
+		elif msg_type == MSG_TYPE_COMMAND:
+			self._validate_received_command_valid(name, params)
 		else:
 			raise InvalidMsgException('invalide msg type', (msg_type, name, params))
 
+	def _validate_received_command_valid(self, name, params):
+		for command in self.commands_to_receive:
+			command_name = command['name']
+			command_params = command['parameters']
+			if name != command_name:
+				continue
+			if len(command_params) != len(params):
+				return False
+			for i in range(len(params)):
+				if not isinstance(params[i], command_params[i]['type']):
+					raise InvalidMsgException('invalide command params', (name, params))
+			return True
+		raise InvalidMsgException('no such command', (name, params))
+
 	def _validate_received_responce_valid(self, name, params):
-		for command in commands:
+		for command in self.commands_to_send:
 			command_name = command['name']
 			command_returns = command['returns']
 			if name != command_name:
@@ -130,20 +145,6 @@ class CBClientBase(CBProtocolBase):
 			return True
 		raise InvalidMsgException('no such command', (name, params))
 
-	def _validate_received_event_valid(self, name, params):
-		for event in events:
-			event_name = event['name']
-			event_params = event['parameters']
-			if name != event_name:
-				continue
-			if len(event_params) != len(params):
-				return False
-			for i in range(len(params)):
-				if not isinstance(params[i], event_params[i]['type']):
-					raise InvalidMsgException('invalide event params', (name, params))
-			return True
-		raise InvalidMsgException('no such event', (name, params))
-
 	def _on_response(self, params):
 		cmd_id = params[0]
 		if not cmd_id in self._cmd_defers:
@@ -151,35 +152,18 @@ class CBClientBase(CBProtocolBase):
 		d = self._cmd_defers[cmd_id]
 		del self._cmd_defers[cmd_id]
 		d.callback(params[1:])
+'''
 
-	def _next_cmd_id(self):
-		self._last_cmd_id += 1
-		return self._last_cmd_id
+CBClientBase_template = '''
+class CBClientBase(CBProtocolBase):
+	commands_to_send = common_commands + client_commands
+	commands_to_receive = common_commands + server_commands
 '''
 
 CBServerBase_template = '''
 class CBServerBase(CBProtocolBase):
-	def __init__(self):
-		pass
-	def _validate_received_msg(self, msg_type, name, params):
-		if msg_type == MSG_TYPE_COMMAND:
-			return self._validate_received_command_valid(name, params)
-		else:
-			raise InvalidMsgException('invalide msg type', (msg_type, name, params))
-
-	def _validate_received_command_valid(self, name, params):
-		for command in commands:
-			command_name = command['name']
-			command_params = command['parameters']
-			if name != command_name:
-				continue
-			if len(command_params) != len(params):
-				return False
-			for i in range(len(params)):
-				if not isinstance(params[i], command_params[i]['type']):
-					raise InvalidMsgException('invalide command params', (name, params))
-			return True
-		raise InvalidMsgException('no such command', (name, params))
+	commands_to_send = common_commands + server_commands
+	commands_to_receive = common_commands + client_commands
 '''
 
 test_file_header = '''
@@ -209,37 +193,34 @@ class TestCBProtocolMixin(unittest.TestCase):
 		return bool(self._expection)
 	def set_test_case(self, test_case):
 		self._test_case = test_case
-'''
-
-TestCBClientBase_template = '''
-
-class TestCBClientBase(TestCBProtocolMixin, CBClientBase):
-	def __init__(self):
-		CBClientBase.__init__(self)
-		TestCBProtocolMixin.__init__(self)
-	def set_server(self, server):
-		self._remote = server
+	def set_remote(self, remote):
+		self._remote = remote
 	def _gen_msg(self, msg_type, msg_name, params):
 		self._remote._expection.append([msg_name, params])
-		return CBClientBase._gen_msg(self, msg_type, msg_name, params)
+		return self._base._gen_msg(self, msg_type, msg_name, params)
 	def _on_response(self, params):
 		self._test_case.assertTrue(self._expection)
 		_, expected_params = self._expection[0]
 		del self._expection[0]
 		self._test_case.assertEqual(params, expected_params)
-		CBClientBase._on_response(self, params)
+		self._base._on_response(self, params)
+'''
+
+TestCBClientBase_template = '''
+class TestCBClientBase(TestCBProtocolMixin, CBClientBase):
+	_base = CBClientBase
+	def __init__(self):
+		CBClientBase.__init__(self)
+		TestCBProtocolMixin.__init__(self)
+
 '''
 
 TestCBServerBase_template = '''
 class TestCBServerBase(TestCBProtocolMixin, CBServerBase):
+	_base = CBServerBase
 	def __init__(self):
 		CBServerBase.__init__(self)
 		TestCBProtocolMixin.__init__(self)
-	def set_client(self, server):
-		self._remote = server
-	def _gen_msg(self, msg_type, msg_name, params):
-		self._remote._expection.append([msg_name, params])
-		return CBServerBase._gen_msg(self, msg_type, msg_name, params)
 '''
 
 test_expected_msg_template = '''
@@ -258,12 +239,6 @@ def generate_command_receiver_name(name):
 
 def generate_response_sender_name(name):
 	return 'responde_%s'%(name)
-
-def generate_event_sender_name(name):
-	return 'fire_%s'%(name)
-
-def generate_event_receiver_name(name):
-	return 'on_%s'%(name)
 
 def _gen_sender(msg_type_str, name_generator, defination):
 	msg_name = defination['name']
@@ -315,7 +290,6 @@ test_file_to_gen = os.path.join(_dir_name, 'test', '_test_cbprotocolbase.py')
 
 objects_to_add = [
 	generate_command_receiver_name,
-	generate_event_receiver_name
 ]
 
 def gen_protocol_if_needed():
@@ -327,34 +301,33 @@ def gen_protocol_if_needed():
 
 def gen_protocol():
 	with open(file_to_gen, 'wb') as f:
-		f.write(cbprotocolbase_header)
+		f.write(_file_header)
 		for obj in objects_to_add:
 			f.write(''.join(inspect.getsourcelines(obj)[0]))
+		gen_common(f)
 		gen_client(f)
 		gen_server(f)
 
-def gen_client(f):
+def _gen(f, header, commands_to_send, commands_to_receive):
 	str_arr = []
-	str_arr.append(CBClientBase_template)
-	for command in commands:
+	str_arr.append(header)
+	for command in commands_to_send:
 		str_arr.append(_gen_sender("MSG_TYPE_COMMAND", generate_command_sender_name, command))
-	for event in events:
-		str_arr.append(_gen_receiver(generate_event_receiver_name, event))
-	for s in str_arr:
-		f.write(s)
-
-def gen_server(f):
-	str_arr = []
-	str_arr.append(CBServerBase_template)
-	for command in commands:
+	for command in commands_to_receive:
 		str_arr.append(_gen_receiver(generate_command_receiver_name, command))
-	for event in events:
-		str_arr.append(_gen_sender('MSG_TYPE_EVENT', generate_event_sender_name, event))
-	for command in commands:
 		if 'returns' in command:
 			str_arr.append(_gen_sender('MSG_TYPE_RESPONSE', generate_response_sender_name, command))
 	for s in str_arr:
 		f.write(s)
+
+def gen_common(f):
+	_gen(f, CBProtocolBase_template, common_commands, common_commands)
+
+def gen_client(f):
+	_gen(f, CBClientBase_template, client_commands, server_commands)
+
+def gen_server(f):
+	_gen(f, CBServerBase_template, server_commands, client_commands)
 
 def gen_test_protocol_if_needed():
 	test_mtime = os.stat(test_file_to_gen).st_mtime if os.path.exists(test_file_to_gen) else -1
@@ -372,15 +345,15 @@ def gen_test_protocol():
 def gen_test_client(f):
 	str_arr = []
 	str_arr.append(TestCBClientBase_template)
-	for event in events:
-		str_arr.append(_gen_receiver(generate_event_receiver_name, event, is_test=True))
+	for command in (common_commands + server_commands):
+		str_arr.append(_gen_receiver(generate_command_receiver_name, command, is_test=True))
 	for s in str_arr:
 		f.write(s)
 
 def gen_test_server(f):
 	str_arr = []
 	str_arr.append(TestCBServerBase_template)
-	for command in commands:
+	for command in (common_commands + client_commands):
 		str_arr.append(_gen_receiver(generate_command_receiver_name, command, is_test=True))
 	for s in str_arr:
 		f.write(s)
