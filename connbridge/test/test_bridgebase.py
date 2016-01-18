@@ -1,16 +1,16 @@
 from twisted.trial import unittest
 from twisted.test.proto_helpers import StringTransport
 from twisted.internet.protocol import Protocol
-from connbridge.cbprotocolbase import CBProtocolBase
-from connbridge import cbprotocol_generator
+from connbridge.bridgebase import BridgeBase
+from connbridge import bridge_generator
 
-cbprotocol_generator.gen_test_protocol_if_needed()
-execfile(cbprotocol_generator.test_file_to_gen)
+bridge_generator.gen_test_protocol_if_needed()
+execfile(bridge_generator.test_file_to_gen)
 
-class CBProtocolBaseTest(unittest.TestCase):
+class BridgeBaseTest(unittest.TestCase):
 	def _build(self):
-		client = TestCBClientBase()
-		server = TestCBServerBase()
+		client = TestBridgeClientBase()
+		server = TestBridgeServerBase()
 		client.set_remote(server)
 		server.set_remote(client)
 		client.set_test_case(self)
@@ -24,18 +24,17 @@ class CBProtocolBaseTest(unittest.TestCase):
 		self.assertFalse(server.has_expection())
 	def test_login(self):
 		client,server = self._build()
-		client.login('0.1', 'abc', '123456')
+		d = client.login('0.1', 'abc', '123456')
+		server.responde_login(client._last_cmd_id)
 		self.assertEqual(client.msg_count(), 1)
+		self.assertEqual(server.msg_count(), 1)
 		self._loop(client, server)
+		return d
 	def test_client_cb_send(self):
 		client,server = self._build()
-		d = client.cb_send(2, 'hello,world')
-		server.responde_cb_send(client._last_cmd_id, True, '')
+		client.cb_send(2, 'hello,world')
 		self._loop(client, server)
-		return d
 	def test_server_cb_send(self):
 		client,server = self._build()
-		d = server.cb_send(2, 'hello,world')
-		client.responde_cb_send(server._last_cmd_id, True, '')
+		server.cb_send(2, 'hello,world')
 		self._loop(client, server)
-		return d

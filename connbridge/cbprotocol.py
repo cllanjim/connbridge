@@ -255,36 +255,6 @@ class CBClientFactory(ClientFactory):
 class CBServerFactory(Factory):
 	protocol = CBServerProtocol
 
-class CBConnection():
-	def __init__(self, link, id):
-		self.link = link
-		self.id = id
-		self.data_received_callback = None
-		self.closed_callback = None
-		self._closed = False
-
-	def send(self, data):
-		self.link.send_data(self.id, data)
-
-	def close(self):
-		self.link.close_connection(self.id)
-		self._close()
-
-	def set_callbacks(self, data_received_callback, closed_callback):
-		self.data_received_callback = data_received_callback
-		self.closed_callback = closed_callback
-
-	#called from link
-	def _data_received(self, data):
-		assert self.data_received_callback
-		self.data_received_callback(data)
-
-	def _close(self):
-		assert not self._closed
-		self._closed = True
-		if self.closed_callback:
-			self.closed_callback()
-
 class CBServerConnection(CBConnection):
 	def __init__(self, link, id, host, port):
 		CBConnection.__init__(self, link, id)

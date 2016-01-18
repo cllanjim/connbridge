@@ -4,10 +4,6 @@ common_commands = [
 		'parameters' : [
 			{ 'name' : 'id', 'type' : int },
 			{ 'name' : 'data', 'type' : str},
-		],
-		'returns' : [
-			{ 'name' : 'ok', 'type' : bool },
-			{ 'name' : 'err_reason', 'type' : str },
 		]
 	},
 	{
@@ -33,8 +29,6 @@ client_commands = [
 			{ 'name' : 'password', 'type' : str}
 		],
 		'returns' : [
-			{ 'name' : 'ok', 'type' : bool },
-			{ 'name' : 'err_reason', 'type' : str}
 		]
 	},
 	{
@@ -45,8 +39,6 @@ client_commands = [
 			{ 'name' : 'port', 'type' : int}
 		],
 		'returns' : [
-			{ 'name' : 'ok', 'type' : bool },
-			{ 'name' : 'err_reason', 'type' : str}
 		],
 	},
 

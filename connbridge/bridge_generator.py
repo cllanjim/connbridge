@@ -1,6 +1,6 @@
 from string import Template
 import os, inspect
-from cbprotocol_def import common_commands,client_commands,server_commands
+from bridge_def import common_commands,client_commands,server_commands
 
 method_template = '''
 	def %s(%s):
@@ -9,12 +9,12 @@ method_template = '''
 
 _file_header = '''
 #don't modify this file
-#this file is generated from cbprotocol_generator.py and cbprotocol_def.py
-#don't import this file, import "cbprotocolbase" instead
+#this file is generated from bridge_generator.py and bridge_def.py
+#don't import this file, import "bridgebase" instead
 
 import struct
 from twisted.internet import defer
-from cbprotocol_def import common_commands,client_commands,server_commands
+from bridge_def import common_commands,client_commands,server_commands
 
 FIRST_MSG_TYPE = 1
 LAST_MSG_TYPE = 2
@@ -80,8 +80,8 @@ class InvalidMsgException():
 		return '%s : %s' % (self.reason, repr(self.msg))
 '''
 
-CBProtocolBase_template = '''
-class CBProtocolBase():
+BridgeBase_template = '''
+class BridgeBase():
 	def __init__(self):
 		self._cmd_defers = {}
 		self._last_cmd_id = 0
@@ -97,17 +97,24 @@ class CBProtocolBase():
 		msg_type, name, params = _decode(msg)
 		self._validate_received_msg(msg_type, name, params)
 		if msg_type == MSG_TYPE_RESPONSE:
-			self._on_response(params)
+			self._on_response(name, params)
 			return
 		if msg_type == MSG_TYPE_COMMAND:
 			receiver_method_name = generate_command_receiver_name(name)
 		else:
 			raise Exception()
+		self.dispatch_msg_hook(msg_type, name, params)
 		receiver_method = getattr(self, receiver_method_name)
 		receiver_method(*params)
 
 	def _gen_msg(self, msg_type, msg_name, params):
+		self.gen_msg_hook(msg_type, msg_name, params)
 		return _encode(msg_type, msg_name, params)
+
+	def gen_msg_hook(self, msg_type, msg_name, params):
+		pass
+	def dispatch_msg_hook(self, msg_type, name, params):
+		pass
 
 	def _validate_received_msg(self, msg_type, name, params):
 		if msg_type == MSG_TYPE_RESPONSE:
@@ -132,49 +139,63 @@ class CBProtocolBase():
 		raise InvalidMsgException('no such command', (name, params))
 
 	def _validate_received_responce_valid(self, name, params):
+		if name == '_error':
+			if not (len(params) == 2 and isinstance(params[1], str)):
+				raise InvalidMsgException('invalide error response : ', (params,))
+			return
 		for command in self.commands_to_send:
+			if 'returns' not in command:
+				continue
 			command_name = command['name']
 			command_returns = command['returns']
 			if name != command_name:
 				continue
 			if len(command_returns) != len(params):
-				return False
+				raise InvalidMsgException('response params count not match', (name, params))
 			for i in range(len(params)):
 				if not isinstance(params[i], command_returns[i]['type']):
 					raise InvalidMsgException('invalide response params', (name, params))
-			return True
+			return
 		raise InvalidMsgException('no such command', (name, params))
 
-	def _on_response(self, params):
+	def _on_response(self, name, params):
 		cmd_id = params[0]
 		if not cmd_id in self._cmd_defers:
 			raise InvalidMsgException('no such cmd_id : %d'%cmd_id, params)
 		d = self._cmd_defers[cmd_id]
 		del self._cmd_defers[cmd_id]
-		d.callback(params[1:])
+		if name == '_error':
+			assert len(params) == 2
+			d.errback(Exception(params[1]))
+		else:
+			d.callback(params[1:])
+
+	def responde_error(self, cmd_id, reason):
+		msg = self._gen_msg(MSG_TYPE_RESPONSE, '_error', (cmd_id,reason))
+		self._send_msg(msg)
 '''
 
-CBClientBase_template = '''
-class CBClientBase(CBProtocolBase):
+BridgeClientBase_template = '''
+class BridgeClientBase(BridgeBase):
 	commands_to_send = common_commands + client_commands
 	commands_to_receive = common_commands + server_commands
 '''
 
-CBServerBase_template = '''
-class CBServerBase(CBProtocolBase):
+BridgeServerBase_template = '''
+class BridgeServerBase(BridgeBase):
 	commands_to_send = common_commands + server_commands
 	commands_to_receive = common_commands + client_commands
 '''
 
 test_file_header = '''
 #don't modify this file
-#this file is generated from cbprotocol_generator.py and cbprotocol_def.py
+#this file is generated from bridge_generator.py and bridge_def.py
 
 from twisted.trial import unittest
-from connbridge.cbprotocolbase import CBClientBase, CBServerBase
+from connbridge.bridgebase import BridgeClientBase, BridgeServerBase
 
 
-class TestCBProtocolMixin(unittest.TestCase):
+class TestBridgeMixin(unittest.TestCase):
 	def __init__(self):
 		self._msgs_to_send = []
 		self._expection = []
@@ -198,29 +219,29 @@ class TestCBProtocolMixin(unittest.TestCase):
 	def _gen_msg(self, msg_type, msg_name, params):
 		self._remote._expection.append([msg_name, params])
 		return self._base._gen_msg(self, msg_type, msg_name, params)
-	def _on_response(self, params):
+	def _on_response(self, name, params):
 		self._test_case.assertTrue(self._expection)
 		_, expected_params = self._expection[0]
 		del self._expection[0]
 		self._test_case.assertEqual(params, expected_params)
-		self._base._on_response(self, params)
+		self._base._on_response(self, name, params)
 '''
 
-TestCBClientBase_template = '''
-class TestCBClientBase(TestCBProtocolMixin, CBClientBase):
-	_base = CBClientBase
+TestBridgeClientBase_template = '''
+class TestBridgeClientBase(TestBridgeMixin, BridgeClientBase):
+	_base = BridgeClientBase
 	def __init__(self):
-		CBClientBase.__init__(self)
-		TestCBProtocolMixin.__init__(self)
+		BridgeClientBase.__init__(self)
+		TestBridgeMixin.__init__(self)
 
 '''
 
-TestCBServerBase_template = '''
-class TestCBServerBase(TestCBProtocolMixin, CBServerBase):
-	_base = CBServerBase
+TestBridgeServerBase_template = '''
+class TestBridgeServerBase(TestBridgeMixin, BridgeServerBase):
+	_base = BridgeServerBase
 	def __init__(self):
-		CBServerBase.__init__(self)
-		TestCBProtocolMixin.__init__(self)
+		BridgeServerBase.__init__(self)
+		TestBridgeMixin.__init__(self)
 '''
 
 test_expected_msg_template = '''
@@ -283,10 +304,10 @@ def _gen_receiver(name_generator, defination, is_test=False):
 	return method_template%(method_name, ', '.join(['self'] + param_names), '\n'.join(statements))
 
 _dir_name = os.path.dirname(__file__)
-file_to_gen = os.path.join(_dir_name, '_cbprotocolbase.py')
-_depends = [os.path.join(_dir_name,'cbprotocol_generator.py'), os.path.join(_dir_name,'cbprotocol_def.py')]
+file_to_gen = os.path.join(_dir_name, '_bridgebase.py')
+_depends = [os.path.join(_dir_name,'bridge_generator.py'), os.path.join(_dir_name,'bridge_def.py')]
 
-test_file_to_gen = os.path.join(_dir_name, 'test', '_test_cbprotocolbase.py')
+test_file_to_gen = os.path.join(_dir_name, 'test', '_test_bridgebase.py')
 
 objects_to_add = [
 	generate_command_receiver_name,
@@ -321,13 +342,13 @@ def _gen(f, header, commands_to_send, commands_to_receive):
 		f.write(s)
 
 def gen_common(f):
-	_gen(f, CBProtocolBase_template, common_commands, common_commands)
+	_gen(f, BridgeBase_template, common_commands, common_commands)
 
 def gen_client(f):
-	_gen(f, CBClientBase_template, client_commands, server_commands)
+	_gen(f, BridgeClientBase_template, client_commands, server_commands)
 
 def gen_server(f):
-	_gen(f, CBServerBase_template, server_commands, client_commands)
+	_gen(f, BridgeServerBase_template, server_commands, client_commands)
 
 def gen_test_protocol_if_needed():
 	test_mtime = os.stat(test_file_to_gen).st_mtime if os.path.exists(test_file_to_gen) else -1
@@ -344,7 +365,7 @@ def gen_test_protocol():
 
 def gen_test_client(f):
 	str_arr = []
-	str_arr.append(TestCBClientBase_template)
+	str_arr.append(TestBridgeClientBase_template)
 	for command in (common_commands + server_commands):
 		str_arr.append(_gen_receiver(generate_command_receiver_name, command, is_test=True))
 	for s in str_arr:
@@ -352,7 +373,7 @@ def gen_test_client(f):
 
 def gen_test_server(f):
 	str_arr = []
-	str_arr.append(TestCBServerBase_template)
+	str_arr.append(TestBridgeServerBase_template)
 	for command in (common_commands + client_commands):
 		str_arr.append(_gen_receiver(generate_command_receiver_name, command, is_test=True))
 	for s in str_arr:
