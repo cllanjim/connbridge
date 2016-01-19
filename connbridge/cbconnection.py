@@ -47,23 +47,27 @@ class CBClientConnection(CBConnection):
 			self.client = None
 
 	def on_remote_data_received(self, data):
-		self.client.proxy_data_received(data)
+		self.client.cb_data_received(data)
 
 class CBServerConnection(CBConnection, ProxyClient):
-	def __init__(self, bridge, id, host, port):
+	def __init__(self, bridge, id, host, port, cb_connect_cmd_id):
 		CBConnection.__init__(self, bridge, id)
 		ProxyClient.__init__(self)
 		self.proxy_conncet(host, port)
+		self.cb_connect_cmd_id = cb_connect_cmd_id
 
 	def close(self):
 		CBConnection.close(self)
 		if not self.closed:
 			self.proxy_close()
 
-	def on_remote_data_recieved(self, data):
+	def on_remote_data_received(self, data):
 		self.proxy_send_data(data)
 
 	# proxy client callbacks
+	def proxy_connected(self):
+		ProxyClient.proxy_connected(self)
+		self.bridge.responde_cb_connect(self.cb_connect_cmd_id)
 	def proxy_data_received(self, data):
 		self.send(data)
 	def proxy_connection_lost(self, reason):

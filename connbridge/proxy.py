@@ -1,3 +1,5 @@
+from twisted.internet.protocol import Protocol, ClientFactory
+
 class ProxyProctocl(Protocol):
 	def dataReceived(self, data):
 		self.factory.client.proxy_data_received(data)

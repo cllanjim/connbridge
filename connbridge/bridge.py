@@ -4,6 +4,7 @@ from twisted.internet.protocol import Protocol, Factory, ClientFactory
 from twisted.internet import defer
 from twisted.python import log
 from bridgebase import BridgeClientBase, BridgeServerBase
+from cbconnection import CBClientConnection, CBServerConnection
 
 class UnloginException(Exception):
 	pass
@@ -62,7 +63,7 @@ class BridgeMixin:
 			self._base.cb_send(self, id, data_segment)
 			start_offset += self.max_arg_size
 
-	def on_cb_send(self, cmd_id, id, data):
+	def on_cb_send(self, id, data):
 		if id >= self._next_connection_id:
 			raise Exception('SEND invalid connection id')
 		# Maybe data to closed connection, just ignore it
@@ -70,7 +71,7 @@ class BridgeMixin:
 			log.msg('SEND outdated id : %d' % id)
 			return
 		connection = self._connections[id]
-		connection.on_remote_data_recieved(data)
+		connection.on_remote_data_received(data)
 
 	def close_link(self, reason):
 		self._base.close_link(self, reason)
@@ -108,10 +109,10 @@ class BridgeClient(BridgeMixin, BridgeClientBase):
 		conn = CBClientConnection(self, id, client)
 		self._connections[id] = conn
 		self._next_connection_id += 1
-		def cb_connected():
+		def cb_connected(_):
 			if conn.id in self._connections:
 				conn.client.cb_connected()
-		def cb_connect_failed():
+		def cb_connect_failed(_):
 			if conn.id in self._connections:
 				conn.client.cb_connect_failed()
 		d.addCallbacks(cb_connected, cb_connect_failed)
@@ -124,6 +125,7 @@ class BridgeClient(BridgeMixin, BridgeClientBase):
 class BridgeServer(BridgeMixin, BridgeServerBase):
 	#__metaclass__ = _AddAsInheritenceType
 	_base = BridgeServerBase
+	connection_factory = CBServerConnection
 	def __init__(self, user_manager):
 		BridgeMixin.__init__(self)
 		BridgeServerBase.__init__(self)
@@ -149,9 +151,8 @@ class BridgeServer(BridgeMixin, BridgeServerBase):
 		if id != self._next_connection_id:
 			raise InvalideConnectionException('CONNECT command id must one larger per connection')
 		self._next_connection_id += 1
-		connection = CBServerConnection(self, id, host, port)
+		connection = self.connection_factory(self, id, host, port, cmd_id)
 		self._connections[id] = connection
-		self.responde_cb_connect(cmd_id, True, '')
 
 	def dispatch_msg_hook(self, msg_type, msg_name, params):
 		if not self._logined and msg_name != 'login':
