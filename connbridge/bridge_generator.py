@@ -14,6 +14,8 @@ _file_header = '''
 
 import struct
 from twisted.internet import defer
+from twisted.python import log
+from twisted.python import failure
 from bridge_def import common_commands,client_commands,server_commands
 
 FIRST_MSG_TYPE = 1
@@ -103,6 +105,20 @@ class BridgeBase():
 			receiver_method_name = generate_command_receiver_name(name)
 		else:
 			raise Exception()
+
+		log_msg_arr = [receiver_method_name]
+		for command in self.commands_to_receive:
+			if command['name'] != name:
+				continue
+			for i,param_def in enumerate(command['parameters']):
+				param = params[i]
+				verylong = 'verylong' in param_def and param_def['verylong']
+				if verylong and len(param) >= 20:
+					log_msg_arr.append(repr(param[:20]))
+					log_msg_arr.append('...(%d)'%len(param))
+				else:
+					log_msg_arr.append(repr(param))
+		log.msg((' '.join(log_msg_arr)))
 		self.dispatch_msg_hook(msg_type, name, params)
 		receiver_method = getattr(self, receiver_method_name)
 		receiver_method(*params)
@@ -171,7 +187,8 @@ class BridgeBase():
 			d.callback(params[1:])
 
 	def responde_error(self, cmd_id, reason):
-		msg = self._gen_msg(MSG_TYPE_RESPONSE, '_error', (cmd_id,reason))
+		log.msg('responde_error %d %s'%(cmd_id, str(reason)))
+		msg = self._gen_msg(MSG_TYPE_RESPONSE, '_error', (cmd_id,str(reason)))
 		self._send_msg(msg)
 '''
 
@@ -266,6 +283,7 @@ def _gen_sender(msg_type_str, name_generator, defination):
 	method_name = name_generator(msg_name)
 	param_names = []
 	statements = []
+	param_logs = []
 	if msg_type_str == 'MSG_TYPE_RESPONSE':
 		params_def = defination.get('returns')
 	else:
@@ -278,7 +296,11 @@ def _gen_sender(msg_type_str, name_generator, defination):
 			param_name = param_def['name']
 			param_type = param_def['type']
 			param_names.append(param_name)
+			verylong = 'verylong' in param_def and param_def['verylong']
+			verylong_log = '%s if len(%s) < 20 else repr(%s[:20])+"...("+str(len(%s))+")"'%(param_name, param_name, param_name, param_name)
+			param_logs.append('str(%s)'%param_name if not verylong else verylong_log)
 			statements.append('\t\tassert isinstance(%s,%s)'%(param_name,param_type.__name__))
+	statements.append('\t\tlog.msg("%s '%method_name + '%s ' * len(param_logs) + '"%(' + ','.join(param_logs)+'))') 
 	statements.append('\t\tmsg = self._gen_msg(%s, \'%s\', %s)'%(msg_type_str, msg_name, '(%s)'%','.join(param_names+[''])))
 	statements.append('\t\tself._send_msg(msg)')
 	if deal_with_cmd_id:

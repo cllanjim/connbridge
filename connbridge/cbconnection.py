@@ -1,11 +1,14 @@
-from proxy import ProxyClient
+from twisted.python import log
+from proxy import ProxyClient, proxy_connect
 
 class CBConnectionClient:
+	def __init__(self):
+		self.cb_connection = None
 	def cb_connected(self):
 		pass
-	def cb_connect_failed(self):
-		pass
 	def cb_data_received(self, data):
+		pass
+	def cb_connect_failed(self):
 		pass
 	def cb_connection_lost(self):
 		pass
@@ -20,20 +23,11 @@ class CBConnection():
 	def send(self, data):
 		self.bridge.cb_send(self.id, data)
 
-	def close(self):
-		if not self.closed:
-			self.closed = True
-			self.bridge.cb_close(self.id)
-			self.bridge = None
-			self.id = None
-
-	#called from bridge
 	def on_remote_closed(self):
-		assert not self._closed
-		self.remote_closed = True
-		self.close()
+		raise NotImplementedError()
+
 	def on_remote_data_received(self, data):
-		pass
+		raise NotImplementedError()
 
 class CBClientConnection(CBConnection):
 	def __init__(self, bridge, id, client):
@@ -41,28 +35,47 @@ class CBClientConnection(CBConnection):
 		self.client = client
 
 	def close(self):
-		CBConnection.close(self)
 		if not self.closed:
+			self.closed = True
+			self.bridge.cb_close(self.id)
+
+	def on_remote_closed(self):
+		log.msg('on_remote_closed : %d'%self.id)
+		if not self.closed:
+			self.closed = True
 			self.client.cb_connection_lost()
-			self.client = None
 
 	def on_remote_data_received(self, data):
 		self.client.cb_data_received(data)
+
+	def connect_failed(self):
+		log.msg('connect_failed')
+		self.closed = True
+		self.client.cb_connect_failed()
+
+	def connected(self):
+		log.msg('connected')
+		self.client.cb_connected()
 
 class CBServerConnection(CBConnection, ProxyClient):
 	def __init__(self, bridge, id, host, port, cb_connect_cmd_id):
 		CBConnection.__init__(self, bridge, id)
 		ProxyClient.__init__(self)
-		self.proxy_conncet(host, port)
+		proxy_connect(host, port, self)
 		self.cb_connect_cmd_id = cb_connect_cmd_id
 
-	def close(self):
-		CBConnection.close(self)
+	def _close(self):
 		if not self.closed:
-			self.proxy_close()
+			self.closed = True
+			self.bridge.cb_close(self.id)
+
+	def on_remote_closed(self):
+		if not self.closed:
+			self.closed = True
+			self.proxy.close()
 
 	def on_remote_data_received(self, data):
-		self.proxy_send_data(data)
+		self.proxy.send(data)
 
 	# proxy client callbacks
 	def proxy_connected(self):
@@ -71,6 +84,7 @@ class CBServerConnection(CBConnection, ProxyClient):
 	def proxy_data_received(self, data):
 		self.send(data)
 	def proxy_connection_lost(self, reason):
-		self.close()
+		self._close()
 	def proxy_connect_failed(self, reason):
-		self.close()
+		self.bridge.responde_error(self.cb_connect_cmd_id, reason)
+		self._close()

@@ -1,6 +1,6 @@
 from twisted.internet.protocol import Protocol,Factory
 from twisted.protocols import basic
-from cbprotocol import CBServerFactory
+from bridge import BridgeServerFactory, SafeBridgeServer
 import sys
 from twisted.python import log
 
@@ -8,7 +8,9 @@ PORT = 8586
 
 def main():
 	from twisted.internet import reactor
-	f = CBServerFactory()
+	f = BridgeServerFactory()
+	f.protocol = SafeBridgeServer
+
 	reactor.listenTCP(PORT, f)
 	reactor.run()
 

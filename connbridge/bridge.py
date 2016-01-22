@@ -1,10 +1,11 @@
-
 import struct, random
 from twisted.internet.protocol import Protocol, Factory, ClientFactory
 from twisted.internet import defer
 from twisted.python import log
 from bridgebase import BridgeClientBase, BridgeServerBase
 from cbconnection import CBClientConnection, CBServerConnection
+import usermanager
+from twisted.python import log
 
 class UnloginException(Exception):
 	pass
@@ -23,11 +24,12 @@ class BridgeMixin:
 		self._next_connection_id = 1
 		self._logined = True
 		# for test and debug
-		self.raise_exception = False
+		self.raise_exception = True
 
 	def connectionLost(self, reason):
+		log.msg('bridge connectionLost')
 		for id, connection in self._connections.iteritems():
-			connection._close()
+			connection.on_remote_closed()
 		self._connections.clear()
 
 	def msgReceived(self, data):
@@ -43,13 +45,12 @@ class BridgeMixin:
 
 	def cb_close(self, id):
 		conn = self._connections.pop(id)
-		if not conn.remote_closed:
-			self._base.cb_close(self, id)
+		self._base.cb_close(self, id)
 
 	def on_cb_close(self, id):
 		if not id in self._connections:
 			return
-		connection = self._connections[id]
+		connection = self._connections.pop(id)
 		connection.on_remote_closed()
 
 	def cb_send(self, id, data):
@@ -80,6 +81,9 @@ class BridgeMixin:
 	def on_close_link(self, reason):
 		self.transport.loseConnection()
 
+	def bridge_ready(self):
+		pass
+
 class BridgeClient(BridgeMixin, BridgeClientBase):
 	#__metaclass__ = _AddAsInheritenceType
 	_base = BridgeClientBase
@@ -98,9 +102,11 @@ class BridgeClient(BridgeMixin, BridgeClientBase):
 		self._logined = True
 		for msg in self._pending_msgs:
 			self._dispatch_msg(self._gen_msg(*msg))
+		self.factory.owner.bridge_created(self)
 
 	def _login_failed(self, res):
 		self.close_link('login failed')
+		self.factory.owner.bridge_create_failed()
 
 	def cb_connect(self, host, port, client):
 		assert port >= 1 and port <= 65535
@@ -109,18 +115,23 @@ class BridgeClient(BridgeMixin, BridgeClientBase):
 		conn = CBClientConnection(self, id, client)
 		self._connections[id] = conn
 		self._next_connection_id += 1
+		client.cb_connection = conn
 		def cb_connected(_):
 			if conn.id in self._connections:
-				conn.client.cb_connected()
+				conn.connected()
 		def cb_connect_failed(_):
 			if conn.id in self._connections:
-				conn.client.cb_connect_failed()
+				self._connections.pop(conn.id)
+				conn.connect_failed()
 		d.addCallbacks(cb_connected, cb_connect_failed)
-		return conn
 
 	def dispatch_msg_hook(self, msg_type, msg_name, params):
 		if not self._logined:
 			self._pending_msgs.append((msg_type, msg_name, params))
+
+	def bridge_ready(self):
+		log.msg('bridge ready')
+		self.login('0.1', 'hejl', '123456')
 
 class BridgeServer(BridgeMixin, BridgeServerBase):
 	#__metaclass__ = _AddAsInheritenceType
@@ -203,6 +214,9 @@ class MessageProtocol(Protocol):
 	def msgReceived(self, data):
 		raise NotImplementedError()
 
+	def connectionMade(self):
+		self.bridge_ready()
+
 class _SafeMessageProtocolMixin(MessageProtocol):
 	def __init__(self):
 		MessageProtocol.__init__(self)
@@ -221,6 +235,7 @@ class SafeMessageClient(_SafeMessageProtocolMixin):
 	def connectionMade(self):
 		self.key = random.randint(1,255)
 		self.transport.write(struct.pack('!B', self.key))
+		_SafeMessageProtocolMixin.connectionMade(self)
 
 class SafeMessageServer(_SafeMessageProtocolMixin):
 	def dataReceived(self, data):
@@ -246,10 +261,46 @@ class DefaultBridgeServer(BridgeServer, MessageProtocol):
 
 class SafeBridgeClient(BridgeClient, SafeMessageClient):
 	def __init__(self):
-		SafeMessageProtocol.__init__(self)
+		SafeMessageClient.__init__(self)
 		BridgeClient.__init__(self)
 
 class SafeBridgeServer(BridgeServer, SafeMessageServer):
 	def __init__(self, user_manager):
-		SafeMessageProtocol.__init__(self)
+		SafeMessageServer.__init__(self)
 		BridgeServer.__init__(self, user_manager)
+
+class BridgeClientFactory(ClientFactory):
+	MAX_RETRY_COUNT = 0
+
+	def __init__(self, owner, auto_retry):
+		self.deferred = defer.Deferred()
+		self.owner = owner
+		self._retry_count = 0
+
+	def bridge_created(self, bridge):
+		self.bridge = bridge
+		self.owner.bridge_created(bridge)
+		self._retry_count = 0
+
+	def clientConnectionLost(self, connector, reason):
+		log.msg('CBClientProtocol.clientConnectionLost')
+		from twisted.internet import reactor
+		if self._retry_count < self.MAX_RETRY_COUNT and not reactor._stopped:
+			self._retry_count += 1
+			log.msg('retry connect : %d' % self._retry_count)
+			connector.connect()
+		if self._retry_count in (0,1):
+			self.owner.bridge_lost()
+
+	def clientConnectionFailed(self, connector, reason):
+		log.msg('CBClientProtocol.clientConnectionFailed')
+		if self._retry_count < self.MAX_RETRY_COUNT:
+			log.msg('retry connect : %d' % self._retry_count)
+			self._retry_count += 1
+			connector.connect()
+		if self._retry_count == 1:
+			self.owner.bridge_create_failed()
+
+class BridgeServerFactory(Factory):
+	def buildProtocol(self, addr):
+		return self.protocol(usermanager.UserManager())

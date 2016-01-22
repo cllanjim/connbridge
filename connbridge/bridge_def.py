@@ -3,7 +3,7 @@ common_commands = [
 		'name' : 'cb_send',
 		'parameters' : [
 			{ 'name' : 'id', 'type' : int },
-			{ 'name' : 'data', 'type' : str},
+			{ 'name' : 'data', 'type' : str, 'verylong' : True},
 		]
 	},
 	{
