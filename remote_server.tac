@@ -13,8 +13,11 @@ which twistd will look for
 import os
 from twisted.application import service, internet
 from twisted.web import static, server
-import remote_server, wpprotocol
+from connbridge import remote_server
+from connbridge.bridge import BridgeServerFactory,SafeBridgeServer
 
 application = service.Application("wallproxy remote server")
-service = internet.TCPServer(remote_server.PORT, wpprotocol.WPServerFactory())
+factory = BridgeServerFactory()
+factory.protocol = SafeBridgeServer
+service = internet.TCPServer(remote_server.PORT, factory)
 service.setServiceParent(application)
