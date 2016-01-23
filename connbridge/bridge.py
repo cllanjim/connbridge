@@ -298,7 +298,7 @@ class BridgeClientFactory(ClientFactory):
 			log.msg('retry connect : %d' % self._retry_count)
 			self._retry_count += 1
 			connector.connect()
-		if self._retry_count == 1:
+		if self._retry_count == 0 or self._retry_count == 1:
 			self.owner.bridge_create_failed()
 
 class BridgeServerFactory(Factory):

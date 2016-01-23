@@ -35,6 +35,7 @@ class ProxyFactory(ClientFactory):
 		self.proxy_protocol = proxy_protocol
 		for data in self._send_buffer:
 			self.proxy_protocol.transport.write(data)
+		self.client.proxy_connected()
 
 	# proxy
 	def send(self, data):
