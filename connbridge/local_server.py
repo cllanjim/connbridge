@@ -78,7 +78,7 @@ class LocalServer(basic.LineReceiver, ProxyClient, CBConnectionClient):
 
 			mode = self.factory.mode
 			auto_proxy = mode == self.factory.AUTO
-			self._go_bridge = mode == self.factory.PROXY or (auto_proxy and self.factory.should_go_bridge(host))
+			self._go_bridge = mode == self.factory.BRIDGE or (auto_proxy and self.factory.should_go_bridge(host))
 			log.msg('%s %d go_proxy:%s auto_proxy:%d'%(host, port, self._go_bridge, auto_proxy))
 			self.host = host
 			self.port = port
@@ -196,9 +196,10 @@ class LocalServer(basic.LineReceiver, ProxyClient, CBConnectionClient):
 
 class LocalServerFactory(Factory):
 	protocol = LocalServer
-	(AUTO, DIRECT, PROXY) = range(1,1+3)
+	(AUTO, DIRECT, BRIDGE) = range(1,1+3)
 	def __init__(self):
 		self.mode = self.AUTO
+		#self.mode = self.BRIDGE
 		self.bridge = None
 		self.pac = PACList()
 		self.auto_map = {}
@@ -210,8 +211,8 @@ class LocalServerFactory(Factory):
 		from twisted.internet import reactor
 		self.bridge_factory = BridgeClientFactory(self, True)
 		self.bridge_factory.protocol = SafeBridgeClient
-		#remote_addr = '23.88.59.196'
-		remote_addr = '127.0.0.1'
+		remote_addr = '23.88.59.196'
+		#remote_addr = '127.0.0.1'
 		reactor.connectTCP(remote_addr, remote_server.PORT, self.bridge_factory)
 		self.bridge_defer = defer.Deferred()
 		return self.bridge_defer

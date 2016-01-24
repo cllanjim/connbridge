@@ -195,7 +195,7 @@ class MessageProtocol(Protocol):
 			if self._frame_size is None:
 				if len(self._received_data) < 4:
 					return
-				self._frame_size = struct.unpack_from('!I', self._received_data, 0)[0]
+				self._frame_size = struct.unpack_from('!I', buffer(self._received_data), 0)[0]
 				if self._frame_size <= 4:
 					self._frame_size = None
 					self.closeLinkWithMsg('invalide frame size : %d'%self._frame_size)
