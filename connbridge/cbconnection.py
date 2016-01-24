@@ -61,8 +61,8 @@ class CBServerConnection(CBConnection, ProxyClient):
 	def __init__(self, bridge, id, host, port, cb_connect_cmd_id):
 		CBConnection.__init__(self, bridge, id)
 		ProxyClient.__init__(self)
-		proxy_connect(host, port, self)
 		self.cb_connect_cmd_id = cb_connect_cmd_id
+		proxy_connect(host, port, self)
 
 	def _close(self):
 		if not self.closed:

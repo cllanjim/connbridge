@@ -41,7 +41,11 @@ client_commands = [
 		'returns' : [
 		],
 	},
-
+	{
+		'name' : 'hello',
+		'parameters' : [],
+		'returns' : [],
+	},
 ]
 
 server_commands = [

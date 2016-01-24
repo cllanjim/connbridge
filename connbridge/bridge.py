@@ -93,6 +93,7 @@ class BridgeClient(BridgeMixin, BridgeClientBase):
 		self._logined = False
 		self._is_client = True
 		self._pending_msgs = []
+		self.hello_failed_delayed_call = None
 
 	def login(self, version, username, password):
 		d = BridgeClientBase.login(self, version, username, password)
@@ -124,10 +125,25 @@ class BridgeClient(BridgeMixin, BridgeClientBase):
 				self._connections.pop(conn.id)
 				conn.connect_failed()
 		d.addCallbacks(cb_connected, cb_connect_failed)
+		self.hello()
+
+	def hello(self):
+		if self.hello_failed_delayed_call:
+			return
+		BridgeClientBase.hello(self)
+		def hello_failed():
+			self.close_link('hello failed')
+			self.hello_failed_delayed_call = None
+		from twisted.internet import reactor
+		self.hello_failed_delayed_call = reactor.callLater(10, hello_failed)
 
 	def dispatch_msg_hook(self, msg_type, msg_name, params):
 		if not self._logined:
 			self._pending_msgs.append((msg_type, msg_name, params))
+		# any data received regard as hello succeed
+		if self.hello_failed_delayed_call:
+			c,self.hello_failed_delayed_call = self.hello_failed_delayed_call,None
+			c.cancel()
 
 	def bridge_ready(self):
 		log.msg('bridge ready')
@@ -164,6 +180,9 @@ class BridgeServer(BridgeMixin, BridgeServerBase):
 		self._next_connection_id += 1
 		connection = self.connection_factory(self, id, host, port, cmd_id)
 		self._connections[id] = connection
+
+	def on_hello(self, cmd_id):
+		self.responde_hello(cmd_id)
 
 	def dispatch_msg_hook(self, msg_type, msg_name, params):
 		if not self._logined and msg_name != 'login':

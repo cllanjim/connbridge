@@ -185,6 +185,7 @@ class LocalServer(basic.LineReceiver, ProxyClient, CBConnectionClient):
 	def cb_data_received(self, data):
 		self.transport.write(data)
 	def cb_connection_lost(self):
+		log.msg('cb_connection_lost')
 		self.transport.loseConnection()
 	def cb_connect_failed(self):
 		if self.auto_proxy and not self.auto_retried:
@@ -192,6 +193,7 @@ class LocalServer(basic.LineReceiver, ProxyClient, CBConnectionClient):
 			self.auto_retried = True
 			proxy_connect(self.host, self.port, self)
 		else:
+			log.msg('cb_connect_failed')
 			self.respondNotFound()
 
 class LocalServerFactory(Factory):
