@@ -100,6 +100,8 @@ class BridgeBase():
 		self._validate_received_msg(msg_type, name, params)
 		if msg_type == MSG_TYPE_RESPONSE:
 			self._on_response(name, params)
+			log.msg('_on_response %s '%name + ('%s ' * len(params))%params)
+			self.dispatch_msg_hook(msg_type, name, params)
 			return
 		if msg_type == MSG_TYPE_COMMAND:
 			receiver_method_name = generate_command_receiver_name(name)
