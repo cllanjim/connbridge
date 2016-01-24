@@ -20,9 +20,10 @@ class LocalServer(basic.LineReceiver, ProxyClient, CBConnectionClient):
 		self._go_bridge = False
 		self._pending_data_arr = []
 		self.auto_proxy = False
+		self.initial_go_bridge = None
 		self.dest_host = None
 		self.dest_port = None
-		self.auto_retried = False
+		self.failed_count = 0
 
 	def lineReceived(self, line):
 		self._header_lines.append(line)
@@ -78,15 +79,24 @@ class LocalServer(basic.LineReceiver, ProxyClient, CBConnectionClient):
 
 			mode = self.factory.mode
 			auto_proxy = mode == self.factory.AUTO
-			self._go_bridge = mode == self.factory.BRIDGE or (auto_proxy and self.factory.should_go_bridge(host))
+			go_bridge = None
+			if auto_proxy:
+				go_bridge = self.factory.should_go_bridge(host)
 			log.msg('%s %d go_proxy:%s auto_proxy:%d'%(host, port, self._go_bridge, auto_proxy))
 			self.host = host
 			self.port = port
 			self.auto_proxy = auto_proxy
-			if self._go_bridge:
+			self.initial_go_bridge = go_bridge
+
+			if mode == self.factory.BRIDGE or go_bridge is True:
 				self.try_cb_connect()
-			else:
+			elif mode == self.factory.DIRECT or go_bridge is False:
 				proxy_connect(host, port ,self)
+			else:
+				assert auto_proxy and go_bridge is None
+				# try both
+				self.try_cb_connect()
+				proxy_connect(host, port, self)
 
 			self.setRawMode()
 		elif not self._first_line_received:
@@ -124,10 +134,9 @@ class LocalServer(basic.LineReceiver, ProxyClient, CBConnectionClient):
 	def connectionLost(self, reason):
 		if self.cb_connection:
 			self.cb_connection.close()
-		elif self.proxy:
+		if self.proxy:
 			self.proxy.close()
-		else:
-			pass
+
 	def _parseHTTPHeader(self):
 		return None
 	def respondBadRequest(self):
@@ -152,11 +161,14 @@ class LocalServer(basic.LineReceiver, ProxyClient, CBConnectionClient):
 			self.factory.bridge.cb_connect(self.host, self.port, self)
 			for data in self._pending_data_arr:
 				self.cb_connection.send(data)
+		def connect_failed(x):
+			self.cb_connect_failed()
+			return x
 		if not self.factory.bridge:
 			d = self.factory.bridge_defer
 			if not d:
 				d = self.factory.try_create_bridge()
-			d.addCallbacks(connect, lambda x:self.respondGatewayTimeout())
+			d.addCallbacks(connect, connect_failed)
 		else:
 			connect(None)
 
@@ -166,35 +178,69 @@ class LocalServer(basic.LineReceiver, ProxyClient, CBConnectionClient):
 			self.proxy.send(data)
 		if self.auto_proxy:
 			self.factory.update_go_bridge_info(self.host, False)
+			assert self.failed_count < 2
+			if self.cb_connection:
+				self.cb_connection.close()
 	def proxy_data_received(self, data):
 		self.transport.write(data)
 	def proxy_connection_lost(self, reason):
 		self.transport.loseConnection()
 	def proxy_connect_failed(self, reason):
-		if self.auto_proxy and not self.auto_retried:
-			log.msg('direct failed, try bridge')
-			self.auto_retried = True
-			self.try_cb_connect()
+		log.msg('proxy_connect_failed auto_proxy:%s initial_go_bridge:%s failed_count:%s'
+				% (self.auto_proxy, self.initial_go_bridge, self.failed_count))
+		if self.auto_proxy:
+			if self.initial_go_bridge is False:
+				log.msg('direct failed, try bridge')
+				assert self.failed_count == 0
+				self.try_cb_connect()
+			elif self.initial_go_bridge is True:
+				assert self.failed_count == 1
+				self.respondNotFound()
+			else:
+				assert self.initial_go_bridge is None
+				assert self.failed_count < 2
+				if self.failed_count == 0:
+					pass # still trying bridge
+				else:
+					assert self.failed_count == 1
+					self.respondNotFound()
 		else:
 			self.respondNotFound()
+		self.failed_count += 1
 
 	def cb_connected(self):
 		log.msg('cb_connected')
 		if self.auto_proxy:
 			self.factory.update_go_bridge_info(self.host, True)
+			if self.proxy:
+				self.proxy.close()
 	def cb_data_received(self, data):
 		self.transport.write(data)
 	def cb_connection_lost(self):
 		log.msg('cb_connection_lost')
 		self.transport.loseConnection()
 	def cb_connect_failed(self):
-		if self.auto_proxy and not self.auto_retried:
-			log.msg('bridge failed, try direct')
-			self.auto_retried = True
-			proxy_connect(self.host, self.port, self)
+		log.msg('cb_connect_failed auto_proxy:%s initial_go_bridge:%s failed_count:%s'
+				% (self.auto_proxy, self.initial_go_bridge, self.failed_count))
+		if self.auto_proxy:
+			if self.initial_go_bridge is True:
+				log.msg('bridge failed, try direct')
+				assert self.failed_count == 0
+				proxy_connect(self.host, self.port, self)
+			elif self.initial_go_bridge is False:
+				assert self.failed_count == 1
+				self.respondNotFound()
+			else:
+				assert self.initial_go_bridge is None
+				assert self.failed_count < 2
+				if self.failed_count == 0:
+					pass # still trying direct
+				else:
+					assert self.failed_count == 1
+					self.respondNotFound()
 		else:
-			log.msg('cb_connect_failed')
 			self.respondNotFound()
+		self.failed_count += 1
 
 class LocalServerFactory(Factory):
 	protocol = LocalServer
@@ -232,7 +278,7 @@ class LocalServerFactory(Factory):
 		d, self.bridge_defer = self.bridge_defer, None
 		d.errback(Exception('bridge create failed'))
 	def should_go_bridge(self, host):
-		return self.auto_map.get(host, False)
+		return self.auto_map.get(host)
 	def update_go_bridge_info(self, host, should_go_bridge):
 		self.auto_map[host] = should_go_bridge
 

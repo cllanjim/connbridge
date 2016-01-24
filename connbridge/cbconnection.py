@@ -33,6 +33,7 @@ class CBClientConnection(CBConnection):
 	def __init__(self, bridge, id, client):
 		CBConnection.__init__(self, bridge, id)
 		self.client = client
+		self.have_connected = False
 
 	def close(self):
 		if not self.closed:
@@ -43,7 +44,10 @@ class CBClientConnection(CBConnection):
 		log.msg('on_remote_closed : %d'%self.id)
 		if not self.closed:
 			self.closed = True
-			self.client.cb_connection_lost()
+			if self.have_connected:
+				self.client.cb_connection_lost()
+			else:
+				self.client.cb_connect_failed()
 
 	def on_remote_data_received(self, data):
 		self.client.cb_data_received(data)
@@ -55,6 +59,7 @@ class CBClientConnection(CBConnection):
 
 	def connected(self):
 		log.msg('connected')
+		self.have_connected = True
 		self.client.cb_connected()
 
 class CBServerConnection(CBConnection, ProxyClient):
