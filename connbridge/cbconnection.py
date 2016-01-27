@@ -67,6 +67,7 @@ class CBServerConnection(CBConnection, ProxyClient):
 		CBConnection.__init__(self, bridge, id)
 		ProxyClient.__init__(self)
 		self.cb_connect_cmd_id = cb_connect_cmd_id
+		self._pending_data_arr = []
 		proxy_connect(host, port, self)
 
 	def _close(self):
@@ -80,12 +81,18 @@ class CBServerConnection(CBConnection, ProxyClient):
 			self.proxy.close()
 
 	def on_remote_data_received(self, data):
-		self.proxy.send(data)
+		if self.proxy:
+			self.proxy.send(data)
+		else:
+			self._pending_data_arr.append(data)
 
 	# proxy client callbacks
 	def proxy_connected(self):
 		ProxyClient.proxy_connected(self)
 		self.bridge.responde_cb_connect(self.cb_connect_cmd_id)
+		print 'CBServerConnection flush pending data : ', len(self._pending_data_arr)
+		for data in self._pending_data_arr:
+			self.proxy.send(data)
 	def proxy_data_received(self, data):
 		self.send(data)
 	def proxy_connection_lost(self, reason):

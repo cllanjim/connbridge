@@ -14,9 +14,7 @@ class ProxyFactory(ClientFactory):
 	protocol = ProxyProctocl
 	def __init__(self, client):
 		self.client = client
-		client.proxy = self
 		self.closed = False
-		self._send_buffer = []
 		self.proxy_protocol = None
 		self.connector = None
 	def startedConnecting(self, connector):
@@ -33,16 +31,14 @@ class ProxyFactory(ClientFactory):
 
 	def protocol_connected(self, proxy_protocol):
 		self.proxy_protocol = proxy_protocol
-		for data in self._send_buffer:
-			self.proxy_protocol.transport.write(data)
+		self.client.proxy = self
 		self.client.proxy_connected()
 
 	# proxy
 	def send(self, data):
-		if self.proxy_protocol:
-			self.proxy_protocol.transport.write(data)
-		else:
-			self._send_buffer.append(data)
+		log.msg('proxy send : %s (%d)' %(repr(data[:20]), len(data)))
+		self.proxy_protocol.transport.write(data)
+
 	def close(self): 
 		if not self.closed:
 			self.closed = True
@@ -56,7 +52,6 @@ class ProxyFactory(ClientFactory):
 def proxy_connect(host, port ,client):
 	from twisted.internet import reactor
 	factory = ProxyFactory(client)
-	client.proxy = factory
 	reactor.connectTCP(host, port, factory)
 
 class ProxyClient:
